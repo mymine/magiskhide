@@ -1,0 +1,43 @@
+name: Build MagiskHide
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Build variant"
+        required: true
+        default: "debug"
+        type: choice
+        options:
+        - release
+        - debug
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
+    - name: SetupNDK
+      uses: nttld/setup-ndk@v1
+      id: setup-ndk
+      with:
+        ndk-version: r24
+    - name: Build
+      id: build
+      run: |
+        chmod 777 ./build.sh
+        ./build.sh """${{ github.event.inputs.variant }}"""
+    - name: Upload release
+      uses: actions/upload-artifact@v3
+      with:
+        name: magiskhide-release
+        path: out/magisk-module
