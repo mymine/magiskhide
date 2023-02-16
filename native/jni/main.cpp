@@ -3,6 +3,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/system_properties.h>
+#include <signal.h>
 
 #include "procfp.hpp"
 #include "logging.hpp"
@@ -59,6 +60,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Magisk tmpfs path is: %s\n", MAGISKTMP);
 #endif
         LOGI("** MagiskHide daemon started\n");
+
+        signal(SIGTERM, SIG_IGN);
+        signal(SIGUSR1, SIG_IGN);
+        signal(SIGUSR2, SIG_IGN);
 
         int pid = getpid();
         char buf[1024] = { '\0' };

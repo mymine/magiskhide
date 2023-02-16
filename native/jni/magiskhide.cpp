@@ -62,14 +62,20 @@ static vector<int> pid_list;
  
 static void update_uid_map() {
     uid_proc_map.clear();
-    DIR *dirfp = opendir("/data/data");
+    const char *APP_DATA = "/data/user_de/0";
+    DIR *dirfp = opendir(APP_DATA);
+    if (dirfp == nullptr) {
+        APP_DATA = "/data/data";
+        dirfp = opendir(APP_DATA);
+    }
     if (dirfp == nullptr)
         return;
+    LOGI("hide: rescanning apps\n");
     struct dirent *dp;
     struct stat st;
     char buf[4098];
     while ((dp = readdir(dirfp)) != nullptr) {
-        snprintf(buf, sizeof(buf) - 1, "/data/data/%s", dp->d_name);
+        snprintf(buf, sizeof(buf) - 1, "%s/%s", APP_DATA, dp->d_name);
         if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0 ||
             stat(buf, &st) != 0 || !S_ISDIR(st.st_mode))
             continue;

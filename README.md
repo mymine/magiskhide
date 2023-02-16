@@ -1,6 +1,6 @@
 ## MagiskHide
 
-Portable MagiskHide (from MagiskDelta) for Official Magisk v24.0+ as MagiskHide has been removed. In addition, hide based injection using Riru or Zygisk can be detected
+Portable ptrace-based MagiskHide (from MagiskDelta) for Official Magisk v24.0+ as MagiskHide has been removed. In addition, this module does not need to install Riru or enable Zygisk.
 
 ### How to use this
 

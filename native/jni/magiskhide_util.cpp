@@ -37,7 +37,7 @@ bool is_hide_target(int uid, const char *process, int len) {
             snprintf(buf, sizeof(buf) - 1, "SELECT process FROM denylist WHERE package_name = '%s' AND process = '%s'", it->second.data(), process);
         }
     }
-    LOGD("sqlite: %s\n", buf);
+    //LOGD("sqlite: %s\n", buf);
     char *magiskcmd[] = { "magisk", "--sqlite", buf, nullptr };
 
     if (hidels.open(magiskcmd) <= 0)
