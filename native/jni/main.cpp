@@ -20,12 +20,20 @@ void kill_other(struct stat me){
     crawl_procfs([=](int pid) -> bool {
         struct stat st;
         char path[128];
+        char cmdline[1024];
         sprintf(path, "/proc/%d/exe", pid);
         if (stat(path,&st)!=0)
             return true;
+        sprintf(path, "/proc/%d/cmdline", pid);
+        FILE *fp = fopen(path, "re");
+        if (fp == nullptr)
+            return true;
+        fgets(cmdline, sizeof(cmdline), fp);
+        fclose(fp);
         if (pid == myself)
             return true;
-        if (st.st_dev == me.st_dev && st.st_ino == me.st_ino) {
+        if ((st.st_dev == me.st_dev && st.st_ino == me.st_ino) ||
+            (st.st_size == me.st_size &&  strcmp(cmdline, "magiskhide_daemon") == 0)) {
 #ifdef DEBUG
             fprintf(stderr, "Killed: %d\n", pid);
 #endif
