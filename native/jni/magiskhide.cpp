@@ -23,10 +23,11 @@
 using namespace std;
 
 static int inotify_fd = -1;
+static int magiskdb_wd = -1;
 
 static void new_zygote(int pid);
 
-std::map<int, std::string> uid_proc_map;
+std::map<int, std::vector<std::string>> uid_proc_map;
 
 pthread_t monitor_thread;
 
@@ -61,7 +62,6 @@ static vector<int> pid_list;
  ********/
  
 static void update_uid_map() {
-    uid_proc_map.clear();
     const char *APP_DATA = "/data/user_de/0";
     DIR *dirfp = opendir(APP_DATA);
     if (dirfp == nullptr) {
@@ -79,8 +79,26 @@ static void update_uid_map() {
         if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0 ||
             stat(buf, &st) != 0 || !S_ISDIR(st.st_mode))
             continue;
-        LOGD("proc_monitor: update map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
-        uid_proc_map[st.st_uid] = dp->d_name;
+
+        auto it = uid_proc_map.find(st.st_uid);
+        if (it == uid_proc_map.end()) {
+            std::vector<std::string> init;
+            init.emplace_back(std::string(dp->d_name));
+            uid_proc_map[st.st_uid] = init;
+            LOGD("proc_monitor: add map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
+        } else {
+            bool found = false;
+            for (int i = 0; i < it->second.size(); i++) {
+                if (it->second[i] == std::string(dp->d_name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) { 
+                it->second.emplace_back(std::string(dp->d_name));
+                LOGD("proc_monitor: update map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
+            }
+        }
     }
     closedir(dirfp);    
 }
@@ -149,6 +167,8 @@ static void setup_inotify() {
     // Monitor packages.xml
     inotify_add_watch(inotify_fd, "/data/system", IN_CLOSE_WRITE);
 
+    magiskdb_wd = inotify_add_watch(inotify_fd, "/data/adb/magisk.db", IN_MODIFY);
+
     // Monitor app_process
     if (access(APP_PROC "32", F_OK) == 0) {
         inotify_add_watch(inotify_fd, APP_PROC "32", IN_ACCESS);
@@ -176,8 +196,8 @@ static void inotify_event(int) {
     char buf[512];
     auto event = reinterpret_cast<struct inotify_event *>(buf);
     read(inotify_fd, buf, sizeof(buf));
-    if ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0) {
-        update_uid_map();
+    if (event->wd == magiskdb_wd || ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0)) {
+        new_daemon_thread(&update_uid_map);
     } else if (event->mask & IN_ACCESS) {
         check_zygote();
     }

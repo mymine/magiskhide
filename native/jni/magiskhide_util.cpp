@@ -15,31 +15,16 @@
 
 using namespace std;
 
-bool is_hide_target(int uid, const char *process, int len) {
-    struct pstream hidels;
+// true if found
+static bool find_proc_from_pkg(const char *pkg, const char *proc, bool start = false) {
     char buf[4098];
-    int app_id = uid % 100000;
-    if (uid >= 90000) {
-        snprintf(buf, sizeof(buf) - 1, "SELECT process FROM denylist WHERE package_name = 'isolated' AND process LIKE '%s", process);
-        char *strchar_buf = strchr(buf, ':');
-        if (strchar_buf != nullptr)
-            strcpy(strchar_buf, "\%'");
-        else {
-            strcpy(buf + strlen(buf), "\%'");
-        }
-    } else {
-        auto it = uid_proc_map.find(app_id);
-        if (it == uid_proc_map.end())
-            return false;
-        if (strlen(process) > len) {
-            snprintf(buf, sizeof(buf) - 1, "SELECT process FROM denylist WHERE package_name = '%s' AND process LIKE '%s\%'", it->second.data(), process);
-        } else {
-            snprintf(buf, sizeof(buf) - 1, "SELECT process FROM denylist WHERE package_name = '%s' AND process = '%s'", it->second.data(), process);
-        }
-    }
+    struct pstream hidels;
+
+    snprintf(buf, sizeof(buf) - 1, "SELECT process FROM denylist WHERE package_name = '%s' AND process %s '%s", pkg, start? "LIKE" : "=", proc);
+    strcpy(buf + strlen(buf), start? "\%'" : "'");
+
     //LOGD("sqlite: %s\n", buf);
     char *magiskcmd[] = { "magisk", "--sqlite", buf, nullptr };
-
     if (hidels.open(magiskcmd) <= 0)
         return false;
 
@@ -64,6 +49,28 @@ bool is_hide_target(int uid, const char *process, int len) {
     is_target:
     hidels.close_pipe();
     return true;
+}
+
+bool is_hide_target(int uid, const char *process, int len) {
+    int app_id = uid % 100000;
+    if (uid >= 90000) {
+        char buf[4098];
+        strcpy(buf, process);
+        char *strchar_buf = strchr(buf, ':');
+        if (strchar_buf != nullptr)
+            strcpy(strchar_buf, "");
+        if (find_proc_from_pkg("isolated", buf, true))
+            return true;
+    } else {
+        auto it = uid_proc_map.find(app_id);
+        if (it == uid_proc_map.end())
+            return false;
+        for (int i = 0; i < it->second.size(); i++) {
+            if (find_proc_from_pkg(it->second[i].data(), process, strlen(process) >= len))
+                return true;
+        }
+    }
+    return false;
 }
 
 static void lazy_unmount(const char* mountpoint) {
