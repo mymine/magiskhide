@@ -16,7 +16,7 @@
 using namespace std;
 
 // true if found
-static bool find_proc_from_pkg(const char *pkg, const char *proc, bool start = false) {
+bool find_proc_from_pkg(const char *pkg, const char *proc, bool start) {
     char buf[4098];
     struct pstream hidels;
 

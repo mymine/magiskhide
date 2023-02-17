@@ -23,7 +23,6 @@
 using namespace std;
 
 static int inotify_fd = -1;
-static int magiskdb_wd = -1;
 
 static void new_zygote(int pid);
 
@@ -167,8 +166,6 @@ static void setup_inotify() {
     // Monitor packages.xml
     inotify_add_watch(inotify_fd, "/data/system", IN_CLOSE_WRITE);
 
-    magiskdb_wd = inotify_add_watch(inotify_fd, "/data/adb/magisk.db", IN_MODIFY);
-
     // Monitor app_process
     if (access(APP_PROC "32", F_OK) == 0) {
         inotify_add_watch(inotify_fd, APP_PROC "32", IN_ACCESS);
@@ -196,7 +193,7 @@ static void inotify_event(int) {
     char buf[512];
     auto event = reinterpret_cast<struct inotify_event *>(buf);
     read(inotify_fd, buf, sizeof(buf));
-    if (event->wd == magiskdb_wd || ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0)) {
+    if ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0) {
         new_daemon_thread(&update_uid_map);
     } else if (event->mask & IN_ACCESS) {
         check_zygote();
@@ -355,19 +352,27 @@ int wait_for_syscall(pid_t pid) {
     int status;
     while (1) {
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
+        PTRACE_LOG("wait for syscall\n");
         int child = waitpid(pid, &status, 0);
         if (child < 0)
             return 1;
-        if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80)
+        if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
+            PTRACE_LOG("make a syscall\n");
             return 0;
-        if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSEGV)
-            return 1; 
-        if (WIFEXITED(status))
+        }
+        if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSEGV) {
+            // google chrome?
+            PTRACE_LOG("SIGSEGV from child\n");
             return 1;
+        }
+        if (WIFEXITED(status)) {
+            PTRACE_LOG("exited\n");
+            return 1;
+        }
     }
 }
 
-int read_syscall_num(int pid) {
+inline int read_syscall_num(int pid) {
     int sys = -1;
     char buf[1024];
     sprintf(buf, "/proc/%d/syscall", pid);
@@ -399,14 +404,48 @@ void do_check_fork() {
     // wait until thread detach this pid
     for (int i = 0; i < 10000 && ptrace(PTRACE_ATTACH, pid) < 0; i++)
         usleep(100);
+    PTRACE_LOG("pass to thread\n");
     bool allow = false;
+    bool checked = false;
     pid_list.emplace_back(pid);
     waitpid(pid, 0, 0);
     xptrace(PTRACE_SETOPTIONS, pid, nullptr, PTRACE_O_TRACESYSGOOD);
-    for (;;) {
+    struct stat st{};
+    char path[128];
+    for (int syscall_num = -1;;) {
         if (wait_for_syscall(pid) != 0)
             break;
-        if (read_syscall_num(pid) == __NR_prctl) {
+        syscall_num = read_syscall_num(pid);
+        if (syscall_num == __NR_prctl) {
+            if (checked) goto CHECK_PROC;
+            sprintf(path, "/proc/%d", pid);
+            stat(path, &st);
+            PTRACE_LOG("UID=[%d]\n", st.st_uid);
+            if (st.st_uid == 0)
+                continue;
+            if ((st.st_uid % 100000) >= 90000) {
+                PTRACE_LOG("is isolated process\n");
+                goto CHECK_PROC;
+            }
+            // check if UID is on list
+            {
+                bool found = false;
+                auto it = uid_proc_map.find(st.st_uid % 100000);
+                // not found in map
+                if (it == uid_proc_map.end())
+                    break;
+                for (int i = 0; i < it->second.size(); i++) {
+                    if (find_proc_from_pkg(it->second[i].data(), it->second[i].data(), true)) {
+                        found = true;
+                        break;
+                    }
+                }
+                // not found in database
+                if (!found) break;
+            }
+
+            CHECK_PROC:
+            checked = true;
             if (!allow && (
                  // app zygote
                  strstr(get_content(pid, "attr/current").data(), "u:r:app_zygote:s0") ||
@@ -418,6 +457,7 @@ void do_check_fork() {
         }
     }
     // just in case
+    PTRACE_LOG("detach\n");
     ptrace(PTRACE_DETACH, pid);
     auto it = find(pid_list.begin(), pid_list.end(), pid);
     if (it != pid_list.end())
