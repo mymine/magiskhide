@@ -34,3 +34,8 @@ magisk --denylist rm com.google.android.gms com.google.android.gms.unstable
 ```
 
 - Use `magisk --denylist ls` to view denylist configuration
+
+### Bugreport
+
+- Attach `/cache/magisk.log` when report bug.
+

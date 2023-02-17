@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <sys/system_properties.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #include "procfp.hpp"
 #include "logging.hpp"
@@ -13,6 +14,8 @@
 #include "debug.hpp"
 
 const char *MAGISKTMP = nullptr;
+
+int log_fd = -1;
 
 static int myself;
 
@@ -67,7 +70,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "New hide daemon: %d\n", getpid());
         fprintf(stderr, "Magisk tmpfs path is: %s\n", MAGISKTMP);
 #endif
+        log_fd = open("/cache/magisk.log", O_RDWR | O_CREAT | O_APPEND, 0666);
+
         LOGI("** MagiskHide daemon started\n");
+
 
         signal(SIGTERM, SIG_IGN);
         signal(SIGUSR1, SIG_IGN);
