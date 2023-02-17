@@ -5,15 +5,6 @@ on:
     branches: [ master ]
   pull_request:
   workflow_dispatch:
-    inputs:
-      variant:
-        description: "Build variant"
-        required: true
-        default: "debug"
-        type: choice
-        options:
-        - release
-        - debug
 
 jobs:
   build:
@@ -31,13 +22,21 @@ jobs:
       id: setup-ndk
       with:
         ndk-version: r24
-    - name: Build
-      id: build
+    - name: Build release
       run: |
         chmod 777 ./build.sh
-        ./build.sh """${{ github.event.inputs.variant }}"""
+        ./build.sh release
     - name: Upload release
       uses: actions/upload-artifact@v3
       with:
         name: magiskhide-release
+        path: out/magisk-module
+    - name: Build debug
+      run: |
+        chmod 777 ./build.sh
+        ./build.sh debug
+    - name: Upload debug
+      uses: actions/upload-artifact@v3
+      with:
+        name: magiskhide-debug
         path: out/magisk-module
