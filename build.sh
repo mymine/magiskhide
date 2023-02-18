@@ -26,4 +26,5 @@ cp -af magisk-module out
 cp -af README.md out/magisk-module
 cp -af LICENSE out/magisk-module
 mv -fT native/libs out/magisk-module/libs
+sed -i "s/\~REPLACEME\~/$1/g" out/magisk-module/module.prop
 zip -r9 out/magisk-module-release.zip out/magisk-module
