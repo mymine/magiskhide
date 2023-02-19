@@ -63,16 +63,22 @@ int main(int argc, char **argv) {
     if (stat("/proc/self/exe", &me) != 0)
         return 1;
 
+    int pipe_fd[2];
+    if (pipe(pipe_fd) < 0) {
+        fprintf(stderr, "Broken pipe\n");
+        return -1;
+    }
+
     kill_other(me);
 
     if (fork_dont_care() == 0) {
-#ifdef DEBUG
-        fprintf(stderr, "New hide daemon: %d\n", getpid());
-        fprintf(stderr, "Magisk tmpfs path is: %s\n", MAGISKTMP);
-#endif
+        int child = getpid();
+        write(pipe_fd[1], &child, sizeof(child));
+
         log_fd = open("/cache/magisk.log", O_RDWR | O_CREAT | O_APPEND, 0666);
 
         LOGI("** MagiskHide daemon started\n");
+        LOGI("Magisk tmpfs path is: %s\n", MAGISKTMP);
 
         struct pstream pst;
         char *magiskcmd[] = { strdup("magisk"), strdup("--denylist"), strdup("exec"), strdup("true"), nullptr };
@@ -116,5 +122,14 @@ int main(int argc, char **argv) {
         proc_monitor();
         _exit(0);
     }
+    int daemon = -1;
+    read(pipe_fd[0], &daemon, sizeof(daemon));
+    close(pipe_fd[0]);
+    close(pipe_fd[1]);
+
+#ifdef DEBUG
+    fprintf(stderr, "New hide daemon: %d\n", daemon);
+#endif
+
     return 0;
 }
