@@ -90,7 +90,7 @@ static void update_uid_map() {
             std::vector<std::string> init;
             init.emplace_back(std::string(dp->d_name));
             uid_proc_map[st.st_uid] = init;
-            LOGD("proc_monitor: add map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
+            LOGV("proc_monitor: add map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
         } else {
             bool found = false;
             for (int i = 0; i < it->second.size(); i++) {
@@ -101,7 +101,7 @@ static void update_uid_map() {
             }
             if (!found) { 
                 it->second.emplace_back(std::string(dp->d_name));
-                LOGD("proc_monitor: update map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
+                LOGV("proc_monitor: update map uid=[%d] [%s]\n", st.st_uid, dp->d_name);
             }
         }
     }

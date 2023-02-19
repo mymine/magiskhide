@@ -16,8 +16,10 @@ extern int log_fd;
 
 #ifdef DEBUG
 #define LOGD(...) write_log(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, __VA_ARGS__)
 #else
 #define LOGD(...)
+#define LOGV(...)
 #endif
 #define LOGI(...) write_log(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) write_log(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
