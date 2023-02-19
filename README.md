@@ -39,3 +39,6 @@ magisk --denylist rm com.google.android.gms com.google.android.gms.unstable
 
 - Attach `/cache/magisk.log` when report bug.
 
+### Source code
+
+- <https://github.com/HuskyDG/MagiskHide>
