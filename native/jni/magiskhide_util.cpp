@@ -24,8 +24,14 @@ bool find_proc_from_pkg(const char *pkg, const char *proc, bool start) {
     strcpy(buf + strlen(buf), start? "\%'" : "'");
 
     //LOGD("sqlite: %s\n", buf);
-    char *magiskcmd[] = { "magisk", "--sqlite", buf, nullptr };
-    if (hidels.open(magiskcmd) <= 0)
+    
+    char *magiskcmd[] = { strdup("magisk"), strdup("--sqlite"), buf, nullptr };
+    int pid = hidels.open(magiskcmd);
+
+    free(magiskcmd[0]);
+    free(magiskcmd[1]);
+ 
+    if (pid <= 0)
         return false;
 
     int status;

@@ -31,6 +31,9 @@ std::map<int, std::vector<std::string>> uid_proc_map;
 pthread_t monitor_thread;
 
 static int fork_pid = -1;
+static bool do_ptrace = false;
+static int system_server_pid = -1;
+static bool is_process(int pid);
 
 #include "procfp.hpp"
 
@@ -55,6 +58,9 @@ static map<int, struct stat> zygote_map;
 
 // handle list
 static vector<int> pid_list;
+
+// process stat
+static map<int, struct stat> pid_map;
 
 /********
  * Utils
@@ -124,20 +130,107 @@ static int parse_ppid(int pid) {
     return ppid;
 }
 
+static bool is_proc_alive(int pid) {
+    auto it = pid_map.find(pid);
+    char path[128];
+    struct stat st;
+    sprintf(path, "/proc/%d", pid);
+    if (stat(path, &st))
+        return false;
+    if (it != pid_map.end() &&
+        it->second.st_dev == st.st_dev &&
+        it->second.st_ino == st.st_ino)
+        return true;
+    return false;
+}
+
 static bool is_zygote_done() {
     return zygote_map.size() >= 1;
 }
 
+static inline bool read_file(const char *file, char *buf, int count){
+    FILE *fp = fopen(file, "re");
+    if (!fp) return false;
+    fread(buf, count, 1, fp);
+    fclose(fp);
+    return true;
+}
+
+static bool check_process(int pid, const char *process, const char *context, const char *exe) {
+    char path[128];
+    char buf[1024];
+    ssize_t len;
+
+    if (!process) goto check_context;
+    sprintf(path, "/proc/%d/cmdline", pid);
+    if (!read_file(path,buf,sizeof(buf)) ||
+        strcmp(buf, process) != 0)
+        return false;
+
+    check_context:
+    if (!context) goto check_exe;
+    sprintf(path, "/proc/%d/attr/current", pid);
+    if (!read_file(path,buf,sizeof(buf)) || 
+        !strstr(buf, context))
+        return false;
+    
+    check_exe:
+    if (!exe) goto final;
+    sprintf(path, "/proc/%d/exe", pid);
+    len = readlink(path, buf, sizeof(buf)-1);
+    if (len != -1) {
+      buf[len] = '\0';
+    }
+    if (strcmp(buf, exe) != 0)
+        return false;
+
+    final:
+    return true;
+}
+
+static bool check_process2(int pid, const char *process, const char *context, const char *exe) {
+    return check_process(pid, process, (access("/sys/fs/selinux", F_OK) == 0)? context : nullptr, exe);
+}
+
+static bool is_zygote(int pid){
+    return (check_process(pid, nullptr, nullptr, "/system/bin/app_process")
+            || check_process(pid,  nullptr, nullptr, "/system/bin/app_process32")
+            || check_process(pid, nullptr, nullptr, "/system/bin/app_process64"))
+            && (check_process2(pid, "zygote", "u:r:zygote:s0", nullptr)  
+            || check_process2(pid, "zygote64", "u:r:zygote:s0", nullptr)
+            || check_process2(pid, "zygote32", "u:r:zygote:s0", nullptr));
+}
+
 static void check_zygote() {
     crawl_procfs([](int pid) -> bool {
-        char buf[512];
-        snprintf(buf, sizeof(buf), "/proc/%d/attr/current", pid);
-        if (FILE *f = fopen(buf, "re")) {
-            fgets(buf, sizeof(buf), f);
-            if (buf == "u:r:zygote:s0"sv && parse_ppid(pid) == 1)
-                new_zygote(pid);
-            fclose(f);
+        if (!is_process(pid))
+            return true;
+
+        if (is_zygote(pid) && parse_ppid(pid) == 1) {
+            new_zygote(pid);
+            return true;
         }
+        if (check_process2(pid, "system_server", "u:r:system_server:s0", nullptr)
+            && is_zygote(parse_ppid(pid))) {
+            auto it = pid_map.find(pid);
+            char path[128];
+            struct stat st;
+            sprintf(path, "/proc/%d", pid);
+            if (stat(path, &st))
+                goto not_zygote;
+            if (it != pid_map.end()) {
+                if (it->second.st_dev == st.st_dev &&
+                    it->second.st_ino == st.st_ino)
+                    return true;
+                it->second = st;
+            } else {
+                pid_map[pid] = st;
+            }
+            system_server_pid = pid;
+            return true;
+        }
+
+        not_zygote:
         return true;
     });
     if (is_zygote_done()) {
@@ -195,18 +288,23 @@ static void inotify_event(int) {
     read(inotify_fd, buf, sizeof(buf));
     if ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0) {
         new_daemon_thread(&update_uid_map);
+        check_zygote();
     } else if (event->mask & IN_ACCESS) {
         check_zygote();
     }
 }
 
+//UNUSED FUNCTION
 static void term_thread(int) {
     LOGD("proc_monitor: cleaning up\n");
     zygote_map.clear();
+    pid_map.clear();
     attaches.reset();
     close(inotify_fd);
     inotify_fd = -1;
     fork_pid = -1;
+    do_ptrace = false;
+    system_server_pid = -1;
     for (int i = 0; i < pid_list.size(); i++) {
         LOGD("proc_monitor: kill PID=[%d]\n", pid_list[i]);
         kill(pid_list[i], SIGKILL);
@@ -335,9 +433,11 @@ static void new_zygote(int pid) {
         return;
     }
 
-    LOGD("proc_monitor: ptrace zygote PID=[%d]\n", pid);
+    LOGD("proc_monitor: zygote PID=[%d]\n", pid);
     zygote_map[pid] = st;
+    if (!do_ptrace) return;
 
+    LOGD("proc_monitor: ptrace zygote PID=[%d]\n", pid);
     xptrace(PTRACE_ATTACH, pid);
 
     waitpid(pid, nullptr, __WALL | __WNOTHREAD);
@@ -495,8 +595,14 @@ void proc_monitor() {
     act.sa_handler = [](int){ check_zygote(); };
     sigaction(SIGALRM, &act, nullptr);
 
+    zygote_map.clear();
+    pid_map.clear();
     setup_inotify();
+    attaches.reset();
 
+    start_monitor:
+    pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+    do_ptrace = false;
     // First try find existing zygotes
     check_zygote();
     update_uid_map();
@@ -506,6 +612,27 @@ void proc_monitor() {
         itimerval interval { .it_interval = val, .it_value = val };
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
+    pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+    // wait until system_server start
+    while (system_server_pid == -1)
+        sleep(1);
+    if (!is_proc_alive(system_server_pid)) {
+        system_server_pid = -1;
+        pid_map.clear();
+        goto start_monitor;
+    }
+    LOGI("proc_monitor: system server PID=[%d]\n", system_server_pid);
+    // now ptrace zygote
+    for (auto it = zygote_map.begin(); it != zygote_map.end(); it++) {
+        int zygote = it->first;
+        xptrace(PTRACE_ATTACH, zygote);
+        waitpid(zygote, nullptr, __WALL | __WNOTHREAD);
+        xptrace(PTRACE_SETOPTIONS, zygote, nullptr,
+                PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACEEXIT);
+        xptrace(PTRACE_CONT, zygote);
+        LOGI("proc_monitor: ptrace zygote PID=[%d]\n", zygote);
+    }
+    do_ptrace = true;
 
     for (int status;;) {
         pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
@@ -520,6 +647,7 @@ void proc_monitor() {
                     .tv_nsec = 0
                 };
                 nanosleep(&ts, nullptr);
+                goto start_monitor;
             }
             continue;
         }
