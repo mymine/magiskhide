@@ -74,6 +74,27 @@ int main(int argc, char **argv) {
 
         LOGI("** MagiskHide daemon started\n");
 
+        struct pstream pst;
+        char *magiskcmd[] = { strdup("magisk"), strdup("--denylist"), strdup("exec"), strdup("true"), nullptr };
+        int ret = pst.open(magiskcmd);
+
+        free(magiskcmd[0]);
+        free(magiskcmd[1]);
+        free(magiskcmd[2]);
+        free(magiskcmd[3]);
+
+        pst.close_pipe();
+        if (ret <= 0) {
+            LOGW("denylist: daemon error or does not exist\n");
+            _exit(-1);
+        }
+
+        int status = -1;
+        waitpid(pst.pid, &status, 0);
+        if (status != 0) {
+            LOGW("denylist: daemon error or does not exist\n");
+            _exit(-1);
+        }
 
         signal(SIGTERM, SIG_IGN);
         signal(SIGUSR1, SIG_IGN);
