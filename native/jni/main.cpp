@@ -14,6 +14,7 @@
 #include "debug.hpp"
 
 const char *MAGISKTMP = nullptr;
+bool new_magic_mount = false;
 
 int log_fd = -1;
 
@@ -53,12 +54,24 @@ int main(int argc, char **argv) {
     if (switch_mnt_ns(1))
         return -1;
 
-    set_nice_name("magiskhide_daemon");
     MAGISKTMP = getenv("MAGISKTMP");
     if (!MAGISKTMP) MAGISKTMP="/sbin";
 
+    if (argc >= 2 && strcmp(argv[1], "exec")) {
+        if (argc >= 3 && unshare(CLONE_NEWNS) == 0) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf)-1, "%s/.magisk/worker", MAGISKTMP);
+            if (access(buf, F_OK) == 0)
+                new_magic_mount = true;
+            hide_unmount();
+       	    execvp(argv[2], argv + 2);
+        }
+        return 1;
+    }
+
     struct stat me;
     myself = getpid();
+    set_nice_name("magiskhide_daemon");
 
     if (stat("/proc/self/exe", &me) != 0)
         return 1;
@@ -72,8 +85,8 @@ int main(int argc, char **argv) {
     kill_other(me);
 
     if (fork_dont_care() == 0) {
-        int child = getpid();
-        write(pipe_fd[1], &child, sizeof(child));
+        int pid = getpid();
+        write(pipe_fd[1], &pid, sizeof(pid));
 
         log_fd = open("/cache/magisk.log", O_RDWR | O_CREAT | O_APPEND, 0666);
 
@@ -106,7 +119,6 @@ int main(int argc, char **argv) {
         signal(SIGUSR1, SIG_IGN);
         signal(SIGUSR2, SIG_IGN);
 
-        int pid = getpid();
         char buf[1024] = { '\0' };
 
         // escape from cgroup
@@ -118,6 +130,9 @@ int main(int argc, char **argv) {
             switch_cgroup("/dev/memcg/apps", pid);
         }
 
+        snprintf(buf, sizeof(buf)-1, "%s/.magisk/worker", MAGISKTMP);
+        if (access(buf, F_OK) == 0)
+            new_magic_mount = true;
         // run daemon
         proc_monitor();
         _exit(0);
