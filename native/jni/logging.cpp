@@ -8,8 +8,10 @@
 using namespace std;
 
 void log_to_file(int fd, int prio, const char *log) {
-    if (fd < 0)
+    if (fd < 0) {
+        printf("%s", log);
         return;
+    }
     char prio_c = 'I';
     switch (prio) {
         case ANDROID_LOG_DEBUG:
@@ -31,7 +33,6 @@ void log_to_file(int fd, int prio, const char *log) {
             prio_c = 'I';
             break;
     }
-    va_list ap;
     char buf[4098];
     // current date/time based on current system
     time_t now = time(0);

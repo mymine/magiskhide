@@ -81,22 +81,32 @@ bool is_hide_target(int uid, const char *process, int len) {
 
 static void lazy_unmount(const char* mountpoint) {
     if (umount2(mountpoint, MNT_DETACH) != -1)
-        LOGD("hide: Unmounted (%s)\n", mountpoint);
+        LOGD("hide_daemon: Unmounted (%s)\n", mountpoint);
 }
 
 #define IS_TMPFS(s) (info.type == "tmpfs" && starts_with(info.target.data(), "/" s "/"))
 
-static void hide_unmount(int pid) {
-    if (switch_mnt_ns(pid))
-        return;
+static inline bool is_magic_tmpfs(mount_info info) {
+    if (new_magic_mount) {
+        return starts_with(info.root.data(), "/.magisk/");
+    }
+    return IS_TMPFS("system") || 
+            IS_TMPFS("vendor") || 
+            IS_TMPFS("system_ext") || 
+            IS_TMPFS("product");
+}
+
+void hide_unmount(int pid) {
+    if (pid > 0) {
+        if (switch_mnt_ns(pid))
+            return;
+        LOGD("magiskhide: handling PID=[%d]\n", pid);
+    }
     std::vector<std::string> targets;
     for (auto &info: parse_mount_info("self")) {
         if (starts_with(info.target.data(), MAGISKTMP) || // things in magisktmp
             starts_with(info.root.data(), "/adb/modules") || // module nodes
-            IS_TMPFS("system") || 
-            IS_TMPFS("vendor") || 
-            IS_TMPFS("system_ext") || 
-            IS_TMPFS("product")) { // skeleton
+            is_magic_tmpfs(info)) { // skeleton
             targets.push_back(info.target);
         }
     }
