@@ -113,22 +113,6 @@ static inline int read_ns(const int pid, struct stat *st) {
     return stat(path, st);
 }
 
-static int parse_ppid(int pid) {
-    char path[32];
-    int ppid;
-
-    sprintf(path, "/proc/%d/stat", pid);
-
-    auto stat = fopen(path, "re");
-    if (!stat)
-        return -1;
-
-    // PID COMM STATE PPID .....
-    fscanf(stat, "%*d %*s %*c %d", &ppid);
-    fclose(stat);
-    return ppid;
-}
-
 static bool is_proc_alive(int pid) {
     auto it = pid_map.find(pid);
     char path[128];

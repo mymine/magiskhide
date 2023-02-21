@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/mount.h>
+#include <libgen.h>
 
 #include "procfp.hpp"
 #include "logging.hpp"
@@ -26,10 +27,10 @@ void kill_other(struct stat me){
         struct stat st;
         char path[128];
         char cmdline[1024];
-        sprintf(path, "/proc/%d/exe", pid);
+        snprintf(path, 127, "/proc/%d/exe", pid);
         if (stat(path,&st)!=0)
             return true;
-        sprintf(path, "/proc/%d/cmdline", pid);
+        snprintf(path, 127, "/proc/%d/cmdline", pid);
         FILE *fp = fopen(path, "re");
         if (fp == nullptr)
             return true;
@@ -48,6 +49,29 @@ void kill_other(struct stat me){
     });
 }
 
+void find_magiskd() {
+    crawl_procfs([=](int pid) -> bool {
+        struct stat st;
+        char path[128];
+        char cmdline[1024];
+        snprintf(path, 127, "/proc/%d", pid);
+        if (stat(path,&st)!=0)
+            return true;
+        snprintf(path, 127, "/proc/%d/cmdline", pid);
+        FILE *fp = fopen(path, "re");
+        if (fp == nullptr)
+            return true;
+        fgets(cmdline, sizeof(cmdline), fp);
+        fclose(fp);
+        snprintf(path, 127, "/proc/%d/exe", pid);
+        if (strcmp(cmdline, "magiskd") == 0 && parse_ppid(pid) == 1 && st.st_uid == 0) {
+            MAGISKTMP = dirname(realpath(path, nullptr));
+            return false;
+        }
+        return true;
+    });
+}
+
 int main(int argc, char **argv) {
     if (getuid() != 0)
         return -1;
@@ -55,8 +79,14 @@ int main(int argc, char **argv) {
     if (switch_mnt_ns(1))
         return -1;
 
-    MAGISKTMP = getenv("MAGISKTMP");
-    if (!MAGISKTMP) MAGISKTMP="/sbin";
+    find_magiskd();
+    if (MAGISKTMP == nullptr) {
+        LOGI("cannot find magiskd\n");
+        return -1;
+    }
+#ifdef DEBUG
+    LOGD("Magisk tmpfs path is %s\n", MAGISKTMP);
+#endif
 
     if (argc >= 2 && strcmp(argv[1], "exec") == 0) {
         if (argc >= 3 && unshare(CLONE_NEWNS) == 0) {
@@ -122,6 +152,8 @@ int main(int argc, char **argv) {
         signal(SIGUSR2, SIG_IGN);
 
         char buf[1024] = { '\0' };
+
+        setsid();
 
         // escape from cgroup
         switch_cgroup("/acct", pid);

@@ -141,3 +141,19 @@ void switch_cgroup(const char *cgroup, int pid) {
     close(fd);
 }
 
+int parse_ppid(int pid) {
+    char path[32];
+    int ppid;
+
+    sprintf(path, "/proc/%d/stat", pid);
+
+    auto stat = fopen(path, "re");
+    if (!stat)
+        return -1;
+
+    // PID COMM STATE PPID .....
+    fscanf(stat, "%*d %*s %*c %d", &ppid);
+    fclose(stat);
+    return ppid;
+}
+

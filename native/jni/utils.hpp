@@ -76,4 +76,5 @@ struct pstream {
 };
 
 void switch_cgroup(const char *cgroup, int pid);
+int parse_ppid(int pid);
 
