@@ -64,6 +64,24 @@ static map<int, struct stat> pid_map;
 /********
  * Utils
  ********/
+
+static void kill_usap_zygote() {
+    crawl_procfs([=](int pid) -> bool {
+        char path[128];
+        char cmdline[1024];
+        snprintf(path, 127, "/proc/%d/cmdline", pid);
+        FILE *fp = fopen(path, "re");
+        if (fp == nullptr)
+            return true;
+        fgets(cmdline, sizeof(cmdline), fp);
+        fclose(fp);
+        if (strcmp(cmdline, "usap32") == 0 || strcmp(cmdline, "usap64") == 0) {
+            LOGD("proc_monitor: kill PID=[%d] (%s)\n", pid, cmdline);
+            kill(pid, SIGKILL);
+        }
+        return true;
+    });
+}
  
 static void update_uid_map() {
     const char *APP_DATA = "/data/user_de/0";
@@ -610,6 +628,7 @@ void proc_monitor() {
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
     update_uid_map();
+    kill_usap_zygote();
 
     for (int status;;) {
         pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
