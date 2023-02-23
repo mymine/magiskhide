@@ -8,6 +8,8 @@
 #include <string>
 #include <sys/poll.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <algorithm>
 
 #include "magiskhide_util.hpp"
 #include "utils.hpp"
@@ -103,10 +105,23 @@ void hide_unmount(int pid) {
         LOGD("magiskhide: handling PID=[%d]\n", pid);
     }
     std::vector<std::string> targets;
+    struct stat st;
     for (auto &info: parse_mount_info("self")) {
-        if (starts_with(info.target.data(), MAGISKTMP) || // things in magisktmp
-            starts_with(info.root.data(), "/adb/modules") || // module nodes
-            is_magic_tmpfs(info)) { // skeleton
+        if ((starts_with(info.target.data(), MAGISKTMP) || // things in magisktmp
+            is_magic_tmpfs(info)) && // skeleton
+            stat(info.target.data(), &st) == 0 && st.st_dev == info.device) {
+            targets.push_back(info.target);
+        }
+    }
+
+    for (auto &s : targets)
+        lazy_unmount(s.data());
+
+    targets.clear();
+
+    for (auto &info: parse_mount_info("self")) {
+        if (starts_with(info.root.data(), "/adb/modules") && // skeleton
+            stat(info.target.data(), &st) == 0 && st.st_dev == info.device) {
             targets.push_back(info.target);
         }
     }
