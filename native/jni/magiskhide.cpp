@@ -332,8 +332,11 @@ static void term_thread(int) {
 // but disable when actually building for usage (you won't want
 // your logcat spammed with new thread events from all apps)
 
-//#define PTRACE_LOG(fmt, args...) LOGD("PID=[%d] " fmt, pid, ##args)
+#ifdef DEBUG
+#define PTRACE_LOG(fmt, args...) if (trace_log) LOGD("PID=[%d] " fmt, pid, ##args);
+#else
 #define PTRACE_LOG(...)
+#endif
 
 static void detach_pid(int pid, int signal = 0) {
     attaches[pid] = false;
@@ -372,6 +375,8 @@ static bool check_pid(int pid) {
     if (cmdline == "zygote"sv || cmdline == "zygote32"sv || cmdline == "zygote64"sv ||
         cmdline == "usap32"sv || cmdline == "usap64"sv || cmdline == "<pre-initialized>"sv)
         return false;
+
+    PTRACE_LOG("cmdline=[%s]\n", cmdline);
 
     if (!is_hide_target(uid, cmdline, 95))
         goto not_target;
@@ -455,12 +460,12 @@ int wait_for_syscall(pid_t pid) {
     int status;
     while (1) {
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        PTRACE_LOG("wait for syscall\n");
+        //PTRACE_LOG("wait for syscall\n");
         int child = waitpid(pid, &status, 0);
         if (child < 0)
             return 1;
         if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
-            PTRACE_LOG("make a syscall\n");
+            //PTRACE_LOG("make a syscall\n");
             return 0;
         }
         if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSEGV) {
@@ -520,6 +525,7 @@ void do_check_fork() {
             break;
         syscall_num = read_syscall_num(pid);
         if (syscall_num == __NR_prctl) {
+            PTRACE_LOG("call syscall prctl()\n");
             if (checked) goto CHECK_PROC;
             sprintf(path, "/proc/%d", pid);
             stat(path, &st);

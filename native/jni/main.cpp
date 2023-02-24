@@ -17,6 +17,7 @@
 
 const char *MAGISKTMP = nullptr;
 bool new_magic_mount = false;
+bool trace_log = false;
 
 int log_fd = -1;
 
@@ -104,6 +105,13 @@ int main(int argc, char **argv) {
     struct stat me;
     myself = getpid();
     set_nice_name("magiskhide_daemon");
+
+#ifdef DEBUG
+    if (argc >= 2 && strcmp(argv[1], "test") == 0) {
+   	    proc_monitor();
+   	    return 0;
+    }
+#endif
 
     if (stat("/proc/self/exe", &me) != 0)
         return 1;
