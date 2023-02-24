@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <vector>
 #include <sys/wait.h>
+#include <string>
 
 using thread_entry = void *(*)(void *);
 
@@ -77,4 +78,23 @@ struct pstream {
 
 void switch_cgroup(const char *cgroup, int pid);
 int parse_ppid(int pid);
+
+template <typename T>
+class reversed_container {
+public:
+    reversed_container(T &base) : base(base) {}
+    decltype(std::declval<T>().rbegin()) begin() { return base.rbegin(); }
+    decltype(std::declval<T>().crbegin()) begin() const { return base.crbegin(); }
+    decltype(std::declval<T>().crbegin()) cbegin() const { return base.crbegin(); }
+    decltype(std::declval<T>().rend()) end() { return base.rend(); }
+    decltype(std::declval<T>().crend()) end() const { return base.crend(); }
+    decltype(std::declval<T>().crend()) cend() const { return base.crend(); }
+private:
+    T &base;
+};
+
+template <typename T>
+reversed_container<T> reversed(T &base) {
+    return reversed_container<T>(base);
+}
 

@@ -105,28 +105,35 @@ void hide_unmount(int pid) {
         LOGD("magiskhide: handling PID=[%d]\n", pid);
     }
     std::vector<std::string> targets;
-    struct stat st;
+
+    // unmount tmpfs node
+    targets.push_back(MAGISKTMP);
     for (auto &info: parse_mount_info("self")) {
-        if ((starts_with(info.target.data(), MAGISKTMP) || // things in magisktmp
-            is_magic_tmpfs(info)) && // skeleton
-            stat(info.target.data(), &st) == 0 && st.st_dev == info.device) {
+        if (is_magic_tmpfs(info)) {
             targets.push_back(info.target);
         }
     }
-
-    for (auto &s : targets)
+    for (auto &s : reversed(targets))
         lazy_unmount(s.data());
-
     targets.clear();
 
+    // unmount module node
     for (auto &info: parse_mount_info("self")) {
-        if (starts_with(info.root.data(), "/adb/modules") && // skeleton
-            stat(info.target.data(), &st) == 0 && st.st_dev == info.device) {
+        if (strstr(info.root.data(), "/adb/modules")) {
             targets.push_back(info.target);
         }
     }
+    for (auto &s : reversed(targets))
+        lazy_unmount(s.data());
+    targets.clear();
 
-    for (auto &s : targets)
+    // unmount overlay node
+    for (auto &info: parse_mount_info("self")) {
+        if (starts_with(info.root.data(), "/.magisk/")) {
+            targets.push_back(info.target);
+        }
+    }
+    for (auto &s : reversed(targets))
         lazy_unmount(s.data());
 }
 
