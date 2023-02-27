@@ -480,18 +480,6 @@ int wait_for_syscall(pid_t pid) {
     }
 }
 
-inline int read_syscall_num(int pid) {
-    int sys = -1;
-    char buf[1024];
-    sprintf(buf, "/proc/%d/syscall", pid);
-    FILE *fp = fopen(buf, "re");
-    if (fp) {
-        fscanf(fp, "%d", &sys);
-        fclose(fp);
-    }
-    return sys;
-}
-
 static std::string get_content(int pid, const char *file) {
     char buf[1024];
     sprintf(buf, "/proc/%d/%s", pid, file);
@@ -523,9 +511,7 @@ void do_check_fork() {
     for (int syscall_num = -1;;) {
         if (wait_for_syscall(pid) != 0)
             break;
-        syscall_num = read_syscall_num(pid);
-        if (syscall_num == __NR_prctl) {
-            PTRACE_LOG("call syscall prctl()\n");
+        {
             if (checked) goto CHECK_PROC;
             sprintf(path, "/proc/%d", pid);
             stat(path, &st);
