@@ -90,7 +90,7 @@ static void lazy_unmount(const char* mountpoint) {
 
 static inline bool is_magic_tmpfs(mount_info info) {
     if (new_magic_mount) {
-        return starts_with(info.root.data(), "/.magisk/");
+        return info.device == worker_dev;
     }
     return IS_TMPFS("system") || 
             IS_TMPFS("vendor") || 
@@ -107,7 +107,7 @@ void hide_unmount(int pid) {
     std::vector<std::string> targets;
 
     // unmount tmpfs node
-    targets.push_back(MAGISKTMP);
+    lazy_unmount(MAGISKTMP);
     for (auto &info: parse_mount_info("self")) {
         if (is_magic_tmpfs(info)) {
             targets.push_back(info.target);

@@ -19,6 +19,7 @@ const char *MAGISKTMP = nullptr;
 bool new_magic_mount = false;
 bool trace_log = false;
 int SDK_INT = 0;
+dev_t worker_dev = 0;
 
 int log_fd = -1;
 
@@ -91,8 +92,12 @@ int main(int argc, char **argv) {
         if (argc >= 3 && unshare(CLONE_NEWNS) == 0) {
             char buf[1024];
             snprintf(buf, sizeof(buf)-1, "%s/.magisk/worker", MAGISKTMP);
-            if (access(buf, F_OK) == 0)
+            if (access(buf, F_OK) == 0) {
                 new_magic_mount = true;
+                struct stat st{};
+                stat(buf, &st);
+                worker_dev = st.st_dev;
+            }
             mount(nullptr, "/", nullptr, MS_PRIVATE | MS_REC, nullptr);
             hide_unmount();
             execvp(argv[2], argv + 2);
@@ -172,8 +177,13 @@ int main(int argc, char **argv) {
         SDK_INT = parse_int(buf);
 
         snprintf(buf, sizeof(buf)-1, "%s/.magisk/worker", MAGISKTMP);
-        if (access(buf, F_OK) == 0)
+        if (access(buf, F_OK) == 0) {
             new_magic_mount = true;
+            struct stat st{};
+            stat(buf, &st);
+            worker_dev = st.st_dev;
+        }
+
         // run daemon
         proc_monitor();
         _exit(0);
