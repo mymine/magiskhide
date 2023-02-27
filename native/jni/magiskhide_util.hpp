@@ -10,6 +10,9 @@ extern std::map<int, std::vector<std::string>> uid_proc_map;
 
 extern bool new_magic_mount;
 extern bool trace_log;
+extern int SDK_INT;
+
+#define APP_DATA_DIR (SDK_INT >= 24 ? "/data/user_de" : "/data/user")
 
 bool is_hide_target(int uid, const char *process, int len = 1024);
 void hide_daemon(int pid);

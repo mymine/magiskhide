@@ -18,6 +18,7 @@
 const char *MAGISKTMP = nullptr;
 bool new_magic_mount = false;
 bool trace_log = false;
+int SDK_INT = 0;
 
 int log_fd = -1;
 
@@ -171,6 +172,9 @@ int main(int argc, char **argv) {
         if (strcmp(buf, "false") != 0) {
             switch_cgroup("/dev/memcg/apps", pid);
         }
+        buf[0] = '\0';
+        __system_property_get("ro.build.version.sdk", buf);
+        SDK_INT = parse_int(buf);
 
         snprintf(buf, sizeof(buf)-1, "%s/.magisk/worker", MAGISKTMP);
         if (access(buf, F_OK) == 0)

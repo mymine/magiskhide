@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
+#include <string_view>
 #include "logging.hpp"
 
 #include "utils.hpp"

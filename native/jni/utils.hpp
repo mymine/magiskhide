@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <iostream>
 #include <pthread.h>
 #include <vector>
