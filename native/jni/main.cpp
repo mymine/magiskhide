@@ -86,9 +86,6 @@ int main(int argc, char **argv) {
         LOGI("cannot find magiskd\n");
         return -1;
     }
-#ifdef DEBUG
-    LOGD("Magisk tmpfs path is %s\n", MAGISKTMP);
-#endif
 
     if (argc >= 2 && strcmp(argv[1], "exec") == 0) {
         if (argc >= 3 && unshare(CLONE_NEWNS) == 0) {
@@ -105,14 +102,11 @@ int main(int argc, char **argv) {
 
     struct stat me;
     myself = getpid();
-    set_nice_name("magiskhide_daemon");
 
-#ifdef DEBUG
-    if (argc >= 2 && strcmp(argv[1], "test") == 0) {
-   	    proc_monitor();
-   	    return 0;
+    if (argc >= 2 && strcmp(argv[1], "--test") == 0) {
+        proc_monitor();
+        return 0;
     }
-#endif
 
     if (stat("/proc/self/exe", &me) != 0)
         return 1;
@@ -124,6 +118,7 @@ int main(int argc, char **argv) {
     }
 
     kill_other(me);
+    set_nice_name("magiskhide_daemon");
 
     if (fork_dont_care() == 0) {
         int pid = getpid();
