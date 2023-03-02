@@ -319,7 +319,7 @@ static void inotify_event(int) {
         inotify_add_watch(inotify_fd, path.data(), IN_ATTRIB);
         return;
     }
-    if ((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0)
+    if (((event->mask & IN_CLOSE_WRITE) && strcmp(event->name, "packages.xml") == 0) || (event->mask & IN_ATTRIB))
         new_daemon_thread(&update_uid_map);
     check_zygote();
 }
