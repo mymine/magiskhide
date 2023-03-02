@@ -1,11 +1,10 @@
-#include <iostream>
 #include <stdio.h>
-#include <ctime>
-#include <chrono>
-#include <unistd.h>
 #include <android/log.h>
-
-using namespace std;
+#include <sys/uio.h>
+#include <sys/time.h>
+#include <time.h>
+#include <string>
+#include <unistd.h>
 
 void log_to_file(int fd, int prio, const char *log) {
     if (fd < 0) {
@@ -35,15 +34,13 @@ void log_to_file(int fd, int prio, const char *log) {
     }
     char buf[4098];
     // current date/time based on current system
-    time_t now = time(0);
-    tm *ltm = localtime(&now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() - std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()*1000;
-
-#define ZERO(i) if (buf[i] == ' ') buf[i] = '0';
-    // print various components of tm structure.
-    snprintf(buf, sizeof(buf) - 1, "%2d-%2d %2d:%2d:%2d.%3d %5d %5d %c : %s", ltm->tm_mon + 1, ltm->tm_mday, ltm->tm_hour, ltm->tm_min, ltm->tm_sec, ms, getpid(), gettid(), prio_c, log);
-    ZERO(0); ZERO(3); ZERO(6); ZERO(9); ZERO(12);
-    ZERO(15); ZERO(16);
-#undef ZERO
+    timeval tv;
+    tm tm;
+    gettimeofday(&tv, nullptr);
+    localtime_r(&tv.tv_sec, &tm);
+    long ms = tv.tv_usec / 1000;
+    size_t off = strftime(buf, sizeof(buf), "%m-%d %T", &tm);
+    snprintf(buf + off, sizeof(buf) - off,
+        ".%03ld %5d %5d %c : %s", ms, getpid(), gettid(), prio_c, log);
     write(fd, buf, strlen(buf));
 }
