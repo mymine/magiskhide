@@ -127,7 +127,6 @@ int main(int argc, char **argv) {
 
     if (fork_dont_care() == 0) {
         int pid = getpid();
-        write(pipe_fd[1], &pid, sizeof(pid));
 
         log_fd = open("/cache/magisk.log", O_RDWR | O_CREAT | O_APPEND, 0666);
 
@@ -184,6 +183,8 @@ int main(int argc, char **argv) {
             worker_dev = st.st_dev;
         }
 
+        write(pipe_fd[1], &pid, sizeof(pid));
+
         // run daemon
         proc_monitor();
         _exit(0);
@@ -194,7 +195,7 @@ int main(int argc, char **argv) {
     close(pipe_fd[1]);
 
 #ifdef DEBUG
-    fprintf(stderr, "New hide daemon: %d\n", daemon);
+    fprintf(stderr, "Launched hide daemon: %d\n", daemon);
 #endif
 
     return 0;
