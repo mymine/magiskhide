@@ -132,6 +132,7 @@ int main(int argc, char **argv) {
 
         LOGI("** MagiskHide daemon started\n");
         LOGI("Magisk tmpfs path is: %s\n", MAGISKTMP);
+        write(pipe_fd[1], &pid, sizeof(pid));
 
         struct pstream pst;
         char *magiskcmd[] = { strdup("magisk"), strdup("--denylist"), strdup("exec"), strdup("true"), nullptr };
@@ -183,7 +184,6 @@ int main(int argc, char **argv) {
             worker_dev = st.st_dev;
         }
 
-        write(pipe_fd[1], &pid, sizeof(pid));
 
         // run daemon
         proc_monitor();
