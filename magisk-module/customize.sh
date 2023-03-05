@@ -10,7 +10,7 @@ fi
 
 if echo "$MAGISK_VER" | grep -q "alpha"; then
     ui_print "! Broken third party Magisk detected"
-    ui_print "- Magisk alpha is known to have some broken changes"
+    ui_print "- Magisk alpha might have some broken changes"
     ui_print "  which will cause this module does not work normally"
     ui_print "- Please use Official Magisk instead"
 fi

@@ -69,6 +69,7 @@ void find_magiskd() {
         snprintf(path, 127, "/proc/%d/exe", pid);
         if (strcmp(cmdline, "magiskd") == 0 && parse_ppid(pid) == 1 && st.st_uid == 0) {
             MAGISKTMP = dirname(realpath(path, nullptr));
+            switch_mnt_ns(pid);
             return false;
         }
         return true;
@@ -84,7 +85,7 @@ int main(int argc, char **argv) {
 
     find_magiskd();
     if (MAGISKTMP == nullptr) {
-        LOGI("cannot find magiskd\n");
+        LOGI("Unable to find magiskd\n");
         return -1;
     }
 
