@@ -41,6 +41,8 @@ magisk --denylist rm com.google.android.gms com.google.android.gms.unstable
 
 <img src="http://huskydg.github.io/img/Screenshot_20230228-102509.png" width="60%"/>
 
+- Only accept bugreport that MagiskHide is not working, not "MagiskHide is not able to hide xxx" issue.
+
 - If there is any problem, use debug version and attach `/cache/magisk.log` when report bug.
 
 ### Source code
