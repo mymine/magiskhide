@@ -32,7 +32,7 @@ pthread_t monitor_thread;
 
 static int fork_pid = -1;
 static int system_server_pid = -1;
-static bool is_process(int pid);
+static bool is_process(int pid, int uid = 0);
 
 #include "procfp.hpp"
 
@@ -228,7 +228,7 @@ static bool check_map(int pid) {
 
 static void check_zygote() {
     crawl_procfs([](int pid) -> bool {
-        if (!is_process(pid))
+        if (!is_process(pid) && !is_process(pid, 1000))
             goto not_zygote;
 
         if (is_zygote(pid) && parse_ppid(pid) == 1 && system_server_pid > 0) {
@@ -434,10 +434,14 @@ not_target:
     return true;
 }
 
-static bool is_process(int pid) {
+static bool is_process(int pid, int uid) {
     char buf[128];
     char key[32];
     int tgid;
+    struct stat st{};
+    sprintf(buf, "/proc/%d", pid);
+    if (stat(buf, &st) || st.st_uid != uid)
+        return false;
     sprintf(buf, "/proc/%d/status", pid);
     auto fp = fopen(buf, "re");
     // PID is dead
