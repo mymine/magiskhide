@@ -16,7 +16,7 @@
 
 #define READ 0
 #define WRITE 1
-	
+    
 long xptrace(int request, pid_t pid, void *addr, void *data) {
     long ret = ptrace(request, pid, addr, data);
     if (ret < 0)
@@ -75,15 +75,20 @@ int parse_int(std::string_view s) {
 }
 
 int switch_mnt_ns(int pid) {
+    int fd = syscall(SYS_pidfd_open, pid, 0), ret = -1;
     char mnt[32];
     snprintf(mnt, sizeof(mnt), "/proc/%d/ns/mnt", pid);
-    if (access(mnt, R_OK) == -1) return 1; // Maybe process died..
+    if (fd >= 0 && (ret = setns(fd, CLONE_NEWNS)) == 0)
+        goto return_result;
+    close(fd);
 
-    int fd, ret;
-    fd = open(mnt, O_RDONLY);
-    if (fd < 0) return 1;
+    // fall back
+    if ((fd = open(mnt, O_RDONLY)) < 0)
+        return 1;
     // Switch to its namespace
-    ret = setns(fd, 0);
+    ret = setns(fd, CLONE_NEWNS);
+
+    return_result:
     close(fd);
     return ret;
 }
