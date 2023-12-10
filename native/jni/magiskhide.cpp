@@ -30,8 +30,6 @@ std::map<int, std::vector<std::string>> uid_proc_map;
 
 pthread_t monitor_thread;
 
-static int fork_pid = -1;
-static int system_server_pid = -1;
 static bool is_process(int pid, int uid = 0);
 
 #include "procfp.hpp"
@@ -49,17 +47,15 @@ private:
     bitset<PID_MAX> set;
 };
 
-// true if pid is monitored
-static pid_set attaches;
-
 // zygote pid -> mnt ns
 static map<int, struct stat> zygote_map;
 
-// handle list
-static vector<int> pid_list;
+// attaches set
+static pid_set attaches;
 
-// process stat
-static map<int, struct stat> pid_map;
+// other set
+static pid_set allowed;
+static pid_set checked;
 
 /********
  * Utils
@@ -137,19 +133,6 @@ static inline int read_ns(const int pid, struct stat *st) {
     return stat(path, st);
 }
 
-static bool is_proc_alive(int pid) {
-    auto it = pid_map.find(pid);
-    char path[128];
-    struct stat st;
-    sprintf(path, "/proc/%d", pid);
-    if (stat(path, &st))
-        return false;
-    if (it != pid_map.end() &&
-        it->second.st_dev == st.st_dev &&
-        it->second.st_ino == st.st_ino)
-        return true;
-    return false;
-}
 
 static bool is_zygote_done() {
     return zygote_map.size() >= 1;
@@ -208,42 +191,34 @@ static bool is_zygote(int pid){
             || check_process2(pid, "zygote32", "u:r:zygote:s0", nullptr));
 }
 
-static bool check_map(int pid) {
-    auto it = pid_map.find(pid);
-    char path[128];
-    struct stat st;
-    sprintf(path, "/proc/%d", pid);
-    if (stat(path, &st))
-        return false;
-    if (it != pid_map.end()) {
-        if (it->second.st_dev == st.st_dev &&
-            it->second.st_ino == st.st_ino)
-            return false;
-        it->second = st;
-    } else {
-        pid_map[pid] = st;
-    }
-    return true;
-}
+static void check_zygote(){
+    bool system_server_started = false;
+    vector<int> zygote_list;
 
-static void check_zygote() {
-    crawl_procfs([](int pid) -> bool {
-        if (!is_process(pid) && !is_process(pid, 1000))
-            goto not_zygote;
-
-        if (is_zygote(pid) && parse_ppid(pid) == 1 && system_server_pid > 0) {
-            new_zygote(pid);
+    crawl_procfs([&zygote_list, &system_server_started](int pid) -> bool {
+        // Zygote process
+        if (is_process(pid) && is_zygote(pid) && parse_ppid(pid) == 1) {
+            zygote_list.push_back(pid);
             return true;
         }
-        if (check_process2(pid, "system_server", "u:r:system_server:s0", nullptr)
-            && is_zygote(parse_ppid(pid)) && check_map(pid)) {
-            system_server_pid = pid;
+
+        // system_server: pid == 1000 and zygote is ppid
+        if (is_process(pid, 1000) && is_zygote(parse_ppid(pid))) {
+            system_server_started = true;
+            return true;
         }
 
-        not_zygote:
-        zygote_map.erase(pid);
+        // Others
         return true;
     });
+
+    if (system_server_started) {
+        // system_server, starting trace zygote
+        for (int i = 0; i < zygote_list.size(); i++) {
+            new_zygote(zygote_list[i]);
+        }
+    }
+
     if (is_zygote_done()) {
         // Stop periodic scanning
         timeval val { .tv_sec = 0, .tv_usec = 0 };
@@ -328,17 +303,9 @@ static void inotify_event(int) {
 static void term_thread(int) {
     LOGD("proc_monitor: cleaning up\n");
     zygote_map.clear();
-    pid_map.clear();
     attaches.reset();
     close(inotify_fd);
     inotify_fd = -1;
-    fork_pid = -1;
-    system_server_pid = -1;
-    for (int i = 0; i < pid_list.size(); i++) {
-        LOGD("proc_monitor: kill PID=[%d]\n", pid_list[i]);
-        kill(pid_list[i], SIGKILL);
-    }
-    pid_list.clear();
     // Restore all signal handlers that was set
     sigset_t set;
     sigfillset(&set);
@@ -460,25 +427,28 @@ static bool is_process(int pid, int uid) {
 }
 
 static void new_zygote(int pid) {
-    struct stat st;
-    if (read_ns(pid, &st))
+    struct stat st, init_st;
+    if (read_ns(pid, &st) || read_ns(1, &init_st) || 
+        (init_st.st_ino == st.st_ino && init_st.st_dev == st.st_dev))
         return;
 
     auto it = zygote_map.find(pid);
     if (it != zygote_map.end()) {
-        // Update namespace info
         it->second = st;
         return;
     }
 
-    if (!check_map(pid))
+    // check if pid is attached
+    if (zygote_map.count(pid))
         return;
 
-    LOGD("proc_monitor: zygote PID=[%d]\n", pid);
-    zygote_map[pid] = st;
+    LOGI("proc_monitor: zygote PID=[%d]\n", pid);
 
-    LOGD("proc_monitor: ptrace zygote PID=[%d]\n", pid);
-    xptrace(PTRACE_ATTACH, pid);
+    // attach_zygote
+    if (xptrace(PTRACE_ATTACH, pid) == -1)
+        return;
+    LOGI("proc_monitor: ptrace zygote PID=[%d]\n", pid);
+    zygote_map[pid] = st;
 
     waitpid(pid, nullptr, __WALL | __WNOTHREAD);
     xptrace(PTRACE_SETOPTIONS, pid, nullptr,
@@ -487,30 +457,6 @@ static void new_zygote(int pid) {
 }
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
-
-int wait_for_syscall(pid_t pid) {
-    int status;
-    while (1) {
-        ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        //PTRACE_LOG("wait for syscall\n");
-        int child = waitpid(pid, &status, 0);
-        if (child < 0)
-            return 1;
-        if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
-            //PTRACE_LOG("make a syscall\n");
-            return 0;
-        }
-        if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSEGV) {
-            // google chrome?
-            PTRACE_LOG("SIGSEGV from child\n");
-            return 1;
-        }
-        if (WIFEXITED(status)) {
-            PTRACE_LOG("exited\n");
-            return 1;
-        }
-    }
-}
 
 static std::string get_content(int pid, const char *file) {
     char buf[1024];
@@ -524,140 +470,65 @@ static std::string get_content(int pid, const char *file) {
     return std::string("");
 }
 
-void do_check_fork() {
-    int pid = fork_pid;
-    fork_pid = 0;
-    if (pid <= 0)
-        return;
-    // wait until thread detach this pid
-    for (int i = 0; i < 10000 && ptrace(PTRACE_ATTACH, pid) < 0; i++)
-        usleep(100);
-    PTRACE_LOG("pass to thread\n");
-    bool allow = false;
-    bool checked = false;
-    pid_list.emplace_back(pid);
-    waitpid(pid, 0, 0);
-    xptrace(PTRACE_SETOPTIONS, pid, nullptr, PTRACE_O_TRACESYSGOOD);
-    struct stat st{};
-    char path[128];
-    for (int syscall_num = -1;;) {
-        if (wait_for_syscall(pid) != 0)
-            break;
-        {
-            if (checked) goto CHECK_PROC;
-            sprintf(path, "/proc/%d", pid);
-            stat(path, &st);
-            PTRACE_LOG("UID=[%d]\n", st.st_uid);
-            if (st.st_uid == 0)
-                continue;
-            if ((st.st_uid % 100000) >= 90000) {
-                PTRACE_LOG("is isolated process\n");
-                goto CHECK_PROC;
-            }
-            // check if UID is on list
-            {
-                bool found = false;
-                auto it = uid_proc_map.find(st.st_uid % 100000);
-                // not found in map
-                if (it == uid_proc_map.end())
-                    break;
-                for (int i = 0; i < it->second.size(); i++) {
-                    if (find_proc_from_pkg(it->second[i].data(), it->second[i].data(), true)) {
-                        found = true;
-                        break;
-                    }
-                }
-                // not found in database
-                if (!found) break;
-            }
-
-            CHECK_PROC:
-            checked = true;
-            if (!allow && (
-                 // app zygote
-                 strstr(get_content(pid, "attr/current").data(), "u:r:app_zygote:s0") ||
-                 // until pre-initialized
-                 get_content(pid, "cmdline") == "<pre-initialized>"))
-                 allow = true;
-            if (allow && check_pid(pid))
-                break;
-        }
-    }
-    // just in case
-    PTRACE_LOG("detach\n");
-    ptrace(PTRACE_DETACH, pid);
-    auto it = find(pid_list.begin(), pid_list.end(), pid);
-    if (it != pid_list.end())
-        pid_list.erase(it);
-}
-
 void proc_monitor() {
     monitor_thread = pthread_self();
+    kill_usap_zygote();
+
+    // Reset cached result
+    zygote_map.clear();
+    attaches.reset();
+    checked.reset();
+    allowed.reset();
 
     // Backup original mask
     sigset_t orig_mask;
-    pthread_sigmask(SIG_SETMASK, nullptr, &orig_mask);
+    pthread_sigmask(SIG_SETMASK, nullptr, & orig_mask);
 
     sigset_t unblock_set;
-    sigemptyset(&unblock_set);
-    sigaddset(&unblock_set, SIGTERMTHRD);
-    sigaddset(&unblock_set, SIGIO);
-    sigaddset(&unblock_set, SIGALRM);
+    sigemptyset( & unblock_set);
+    sigaddset( & unblock_set, SIGTERMTHRD);
+    sigaddset( & unblock_set, SIGIO);
+    sigaddset( & unblock_set, SIGALRM);
 
-    struct sigaction act{};
-    sigfillset(&act.sa_mask);
+    struct sigaction act {};
+    sigfillset( & act.sa_mask);
     act.sa_handler = SIG_IGN;
-    sigaction(SIGTERMTHRD, &act, nullptr);
-    sigaction(SIGIO, &act, nullptr);
-    sigaction(SIGALRM, &act, nullptr);
+    sigaction(SIGTERMTHRD, & act, nullptr);
+    sigaction(SIGIO, & act, nullptr);
+    sigaction(SIGALRM, & act, nullptr);
 
     // Temporary unblock to clear pending signals
-    pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-    pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+    pthread_sigmask(SIG_UNBLOCK, & unblock_set, nullptr);
+    pthread_sigmask(SIG_SETMASK, & orig_mask, nullptr);
 
     act.sa_handler = term_thread;
-    sigaction(SIGTERMTHRD, &act, nullptr);
+    sigaction(SIGTERMTHRD, & act, nullptr);
     act.sa_handler = inotify_event;
-    sigaction(SIGIO, &act, nullptr);
-    act.sa_handler = [](int){ check_zygote(); };
-    sigaction(SIGALRM, &act, nullptr);
+    sigaction(SIGIO, & act, nullptr);
+    act.sa_handler = [](int) {
+        check_zygote();
+    };
+    sigaction(SIGALRM, & act, nullptr);
 
-    zygote_map.clear();
-    pid_map.clear();
     setup_inotify();
-    attaches.reset();
 
-    // First try find existing system server
+    // First try find existing system server and zygote
     check_zygote();
-
-    start_monitor:
-    pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-    // wait until system_server start
-    while (system_server_pid == -1)
-        sleep(1);
-    if (!is_proc_alive(system_server_pid)) {
-        system_server_pid = -1;
-        pid_map.clear();
-        goto start_monitor;
-    }
-    // now ptrace zygote
-    LOGI("proc_monitor: system server PID=[%d]\n", system_server_pid);
-    pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
-    // First try find existing zygotes
-    check_zygote();
+    update_uid_map();
     if (!is_zygote_done()) {
         // Periodic scan every 250ms
-        timeval val { .tv_sec = 0, .tv_usec = 250000 };
-        itimerval interval { .it_interval = val, .it_value = val };
-        setitimer(ITIMER_REAL, &interval, nullptr);
+        timeval val {
+            .tv_sec = 0, .tv_usec = 250000
+        };
+        itimerval interval {
+            .it_interval = val, .it_value = val
+        };
+        setitimer(ITIMER_REAL, & interval, nullptr);
     }
-    update_uid_map();
-    kill_usap_zygote();
 
     for (int status;;) {
-        pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-
-        const int pid = waitpid(-1, &status, __WALL | __WNOTHREAD);
+        pthread_sigmask(SIG_UNBLOCK, & unblock_set, nullptr);
+        const int pid = waitpid(-1, & status, __WALL | __WNOTHREAD);
         if (pid < 0) {
             if (errno == ECHILD) {
                 // Nothing to wait yet, sleep and wait till signal interruption
@@ -666,53 +537,105 @@ void proc_monitor() {
                     .tv_sec = INT_MAX,
                     .tv_nsec = 0
                 };
-                nanosleep(&ts, nullptr);
-                goto start_monitor;
+                nanosleep( & ts, nullptr);
             }
             continue;
         }
 
-        pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+        pthread_sigmask(SIG_SETMASK, & orig_mask, nullptr);
 
-        if (!WIFSTOPPED(status) /* Ignore if not ptrace-stop */)
+        if (!WIFSTOPPED(status) /* Ignore if not ptrace-stop */ )
             DETACH_AND_CONT;
 
         int event = WEVENT(status);
         int signal = WSTOPSIG(status);
 
-        if (signal == SIGTRAP && event) {
+        if (signal == SIGTRAP && zygote_map.count(pid) & event) {
             unsigned long msg;
-            xptrace(PTRACE_GETEVENTMSG, pid, nullptr, &msg);
-            if (zygote_map.count(pid)) {
-                // Zygote event
-                switch (event) {
-                    case PTRACE_EVENT_FORK:
-                    case PTRACE_EVENT_VFORK:
-                        PTRACE_LOG("zygote forked: [%lu]\n", msg);
-                        attaches[msg] = true;
-                        break;
-                    case PTRACE_EVENT_EXIT:
-                        PTRACE_LOG("zygote exited with status: [%lu]\n", msg);
-                        [[fallthrough]];
-                    default:
-                        zygote_map.erase(pid);
-                        DETACH_AND_CONT;
-                }
-            } else {
+            xptrace(PTRACE_GETEVENTMSG, pid, nullptr, & msg);
+            switch (event) {
+            case PTRACE_EVENT_FORK:
+            case PTRACE_EVENT_VFORK:
+                PTRACE_LOG("zygote forked: [%lu]\n", msg);
+                attaches[msg] = true;
+                break;
+            case PTRACE_EVENT_EXIT:
+                PTRACE_LOG("zygote exited with status: [%lu]\n", msg);
+                [
+                    [fallthrough]
+                ];
+            default:
+                zygote_map.erase(pid);
                 DETACH_AND_CONT;
             }
             xptrace(PTRACE_CONT, pid);
+        } else if (signal == (SIGTRAP | 0x80)) {
+            do {
+                struct stat st {};
+                char path[128];
+                if (checked[pid]) goto CHECK_PROC;
+                sprintf(path, "/proc/%d", pid);
+                stat(path, & st);
+                PTRACE_LOG("UID=[%d]\n", st.st_uid);
+                if (st.st_uid == 0)
+                    continue;
+                //LOGD("proc_monitor: PID=[%d] UID=[%d]\n", pid, st.st_uid);
+                if ((st.st_uid % 100000) >= 90000) {
+                    PTRACE_LOG("is isolated process\n");
+                    goto CHECK_PROC;
+                }
+
+                // check if UID is on list
+                {
+                    bool found = false;
+                    auto it = uid_proc_map.find(st.st_uid % 100000);
+                    // not found in map
+                    if (it == uid_proc_map.end())
+                        break;
+                    for (int i = 0; i < it->second.size(); i++) {
+                        if (find_proc_from_pkg(it->second[i].data(), it->second[i].data(), true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    // not found in database
+                    if (!found) goto DETACH_PROC;
+                }
+
+                CHECK_PROC:
+                    checked[pid] = true;
+                if (!allowed[pid] && (
+                        // app zygote
+                        strstr(get_content(pid, "attr/current").data(), "u:r:app_zygote:s0") ||
+                        // until pre-initialized
+                        get_content(pid, "cmdline") == "<pre-initialized>"))
+                    allowed[pid] = true;
+
+                if (!allowed[pid])
+                    continue;
+
+                if (check_pid(pid))
+                    goto skip;
+                continue;
+
+                DETACH_PROC:
+                    detach_pid(pid);
+                goto skip;
+            } while (false);
+            xptrace(PTRACE_SYSCALL, pid);
         } else if (signal == SIGSTOP) {
+            // SIGSTOP is produced by ptrace
             if (!attaches[pid]) {
                 // Double check if this is actually a process
                 attaches[pid] = is_process(pid);
             }
             if (attaches[pid]) {
                 // This is a process, continue monitoring
-                attaches[pid] = false;
-                detach_pid(pid);
-                fork_pid = pid;
-                new_daemon_thread(&do_check_fork);
+                PTRACE_LOG("SIGSTOP from child\n");
+                xptrace(PTRACE_SETOPTIONS, pid, nullptr,
+                    PTRACE_O_TRACESYSGOOD);
+                xptrace(PTRACE_SYSCALL, pid);
+                // TODO : inject syscall
             } else {
                 // This is a thread, do NOT monitor
                 PTRACE_LOG("SIGSTOP from thread\n");
@@ -720,8 +643,12 @@ void proc_monitor() {
             }
         } else {
             // Not caused by us, resend signal
-            xptrace(PTRACE_CONT, pid, nullptr, signal);
+            xptrace((!zygote_map.count(pid) && attaches[pid]) ? 
+                    PTRACE_SYSCALL : PTRACE_CONT, pid, nullptr, signal);
             PTRACE_LOG("signal [%d]\n", signal);
         }
+
+        skip:
+            continue;
     }
 }

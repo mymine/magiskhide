@@ -1,7 +1,7 @@
 id=magiskhide
 name=MagiskHide
-author=HuskyDG @MagiskDelta
+author=HuskyDG
 version=1.10.3
 versionCode=16
-description=Ptrace-based MagiskHide, allows hiding root without need to enable Zygisk. Read DenyList as hidelist. Android 11+ is recommended.
+description=MagiskHide (DenyList works without Zygisk enabled) for official Magisk 24.0+
 updateJson=https://github.com/huskydg/magiskhide/releases/latest/download/update_~REPLACEME~.json
