@@ -61,24 +61,6 @@ static pid_set checked;
  * Utils
  ********/
 
-static void kill_usap_zygote() {
-    crawl_procfs([=](int pid) -> bool {
-        char path[128];
-        char cmdline[1024];
-        snprintf(path, 127, "/proc/%d/cmdline", pid);
-        FILE *fp = fopen(path, "re");
-        if (fp == nullptr)
-            return true;
-        fgets(cmdline, sizeof(cmdline), fp);
-        fclose(fp);
-        if (strcmp(cmdline, "usap32") == 0 || strcmp(cmdline, "usap64") == 0) {
-            LOGD("proc_monitor: kill PID=[%d] (%s)\n", pid, cmdline);
-            kill(pid, SIGKILL);
-        }
-        return true;
-    });
-}
- 
 static void update_uid_map() {
     const char *APP_DATA = APP_DATA_DIR;
     DIR *dirfp = opendir(APP_DATA);
@@ -353,10 +335,6 @@ static bool check_pid(int pid) {
 
     int uid = st.st_uid;
 
-    // UID hasn't changed
-    if (uid == 0)
-        return false;
-
     sprintf(path, "/proc/%d/cmdline", pid);
     if (auto f = fopen(path, "re")) {
         fgets(cmdline, sizeof(cmdline), f);
@@ -472,7 +450,6 @@ static std::string get_content(int pid, const char *file) {
 
 void proc_monitor() {
     monitor_thread = pthread_self();
-    kill_usap_zygote();
 
     // Reset cached result
     zygote_map.clear();
@@ -482,33 +459,33 @@ void proc_monitor() {
 
     // Backup original mask
     sigset_t orig_mask;
-    pthread_sigmask(SIG_SETMASK, nullptr, & orig_mask);
+    pthread_sigmask(SIG_SETMASK, nullptr, &orig_mask);
 
     sigset_t unblock_set;
-    sigemptyset( & unblock_set);
-    sigaddset( & unblock_set, SIGTERMTHRD);
-    sigaddset( & unblock_set, SIGIO);
-    sigaddset( & unblock_set, SIGALRM);
+    sigemptyset(&unblock_set);
+    sigaddset(&unblock_set, SIGTERMTHRD);
+    sigaddset(&unblock_set, SIGIO);
+    sigaddset(&unblock_set, SIGALRM);
 
     struct sigaction act {};
-    sigfillset( & act.sa_mask);
+    sigfillset(&act.sa_mask);
     act.sa_handler = SIG_IGN;
-    sigaction(SIGTERMTHRD, & act, nullptr);
-    sigaction(SIGIO, & act, nullptr);
-    sigaction(SIGALRM, & act, nullptr);
+    sigaction(SIGTERMTHRD, &act, nullptr);
+    sigaction(SIGIO, &act, nullptr);
+    sigaction(SIGALRM, &act, nullptr);
 
     // Temporary unblock to clear pending signals
-    pthread_sigmask(SIG_UNBLOCK, & unblock_set, nullptr);
-    pthread_sigmask(SIG_SETMASK, & orig_mask, nullptr);
+    pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+    pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
 
     act.sa_handler = term_thread;
-    sigaction(SIGTERMTHRD, & act, nullptr);
+    sigaction(SIGTERMTHRD, &act, nullptr);
     act.sa_handler = inotify_event;
-    sigaction(SIGIO, & act, nullptr);
+    sigaction(SIGIO, &act, nullptr);
     act.sa_handler = [](int) {
         check_zygote();
     };
-    sigaction(SIGALRM, & act, nullptr);
+    sigaction(SIGALRM, &act, nullptr);
 
     setup_inotify();
 
@@ -523,12 +500,12 @@ void proc_monitor() {
         itimerval interval {
             .it_interval = val, .it_value = val
         };
-        setitimer(ITIMER_REAL, & interval, nullptr);
+        setitimer(ITIMER_REAL, &interval, nullptr);
     }
 
     for (int status;;) {
-        pthread_sigmask(SIG_UNBLOCK, & unblock_set, nullptr);
-        const int pid = waitpid(-1, & status, __WALL | __WNOTHREAD);
+        pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+        const int pid = waitpid(-1, &status, __WALL | __WNOTHREAD);
         if (pid < 0) {
             if (errno == ECHILD) {
                 // Nothing to wait yet, sleep and wait till signal interruption
@@ -537,12 +514,12 @@ void proc_monitor() {
                     .tv_sec = INT_MAX,
                     .tv_nsec = 0
                 };
-                nanosleep( & ts, nullptr);
+                nanosleep(&ts, nullptr);
             }
             continue;
         }
 
-        pthread_sigmask(SIG_SETMASK, & orig_mask, nullptr);
+        pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
 
         if (!WIFSTOPPED(status) /* Ignore if not ptrace-stop */ )
             DETACH_AND_CONT;
@@ -552,7 +529,7 @@ void proc_monitor() {
 
         if (signal == SIGTRAP && zygote_map.count(pid) & event) {
             unsigned long msg;
-            xptrace(PTRACE_GETEVENTMSG, pid, nullptr, & msg);
+            xptrace(PTRACE_GETEVENTMSG, pid, nullptr, &msg);
             switch (event) {
             case PTRACE_EVENT_FORK:
             case PTRACE_EVENT_VFORK:
@@ -575,32 +552,10 @@ void proc_monitor() {
                 char path[128];
                 if (checked[pid]) goto CHECK_PROC;
                 sprintf(path, "/proc/%d", pid);
-                stat(path, & st);
+                stat(path, &st);
                 PTRACE_LOG("UID=[%d]\n", st.st_uid);
                 if (st.st_uid == 0)
                     continue;
-                //LOGD("proc_monitor: PID=[%d] UID=[%d]\n", pid, st.st_uid);
-                if ((st.st_uid % 100000) >= 90000) {
-                    PTRACE_LOG("is isolated process\n");
-                    goto CHECK_PROC;
-                }
-
-                // check if UID is on list
-                {
-                    bool found = false;
-                    auto it = uid_proc_map.find(st.st_uid % 100000);
-                    // not found in map
-                    if (it == uid_proc_map.end())
-                        break;
-                    for (int i = 0; i < it->second.size(); i++) {
-                        if (find_proc_from_pkg(it->second[i].data(), it->second[i].data(), true)) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    // not found in database
-                    if (!found) goto DETACH_PROC;
-                }
 
                 CHECK_PROC:
                     checked[pid] = true;
