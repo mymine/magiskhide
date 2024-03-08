@@ -27,7 +27,7 @@ jobs:
         chmod 777 ./build.sh
         ./build.sh release
     - name: Upload release
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: magiskhide-release
         path: out/magisk-module
@@ -36,7 +36,7 @@ jobs:
         chmod 777 ./build.sh
         ./build.sh debug
     - name: Upload debug
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: magiskhide-debug
         path: out/magisk-module
